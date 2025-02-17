@@ -123,6 +123,14 @@ def deal_with_remaining_missing_features(num_feats,cat_feats,df):
 
     return num_feats,cat_feats
 
+def deal_with_testing_data(num_feats,cat_feats,df):
+    # TODO: make sure data types are correct
+    # fill numeric na with mean, fill categoric na with mode
+    for x in num_feats:
+        df[x] = df[x].fillna(df[x].mean(),inplace=False)
+    for x in cat_feats:
+        df[x] = df[x].fillna(df[x].mode()[0],inplace=False)
+
 # Train your model.
 def train_challenge_model(data_folder, model_folder, verbose):
     # Find the Challenge data.
@@ -159,6 +167,7 @@ def train_challenge_model(data_folder, model_folder, verbose):
     # split features, class
     X,y = df.drop(target_col,axis=1,inplace=False),df[target_col]
 
+    # TODO: use all training data
     X_train,X_test,y_train,y_test = train_test_split(X,y,test_size=0.2)
 
     if verbose >= 1:
@@ -207,24 +216,27 @@ def run_challenge_model(model, data_folder, verbose):
     # Load data.
     patient_ids, data, label, features = load_challenge_data(data_folder)
     
-    preprocess_data(data,target_columns=['momagefirstpreg_adm'])
-    num_feats,cat_feats,target_col = separate_features(data)
-    num_feats,cat_feats = deal_with_remaining_missing_features(num_feats,cat_feats,data)
+    # preprocess_data(data,target_columns=['momagefirstpreg_adm'])
+    # num_feats,cat_feats,target_col = separate_features(data)
+    # num_feats,cat_feats = deal_with_remaining_missing_features(num_feats,cat_feats,data)
 
     xgb_model,cat_model = model
 
     # get features in order
     xgb_feats = xgb_model.get_booster().feature_names
-    # cat_feats = cat_model.get_feature_names()
+    cat_feats_with_xgb = cat_model.feature_names_
+
+    # process data
+    deal_with_testing_data(xgb_feats,[x for x in cat_feats_with_xgb if x != 'xgb_probs'],data)
 
     # logistic regression
     xgb_pred = xgb_model.predict_proba(data[xgb_feats])[:,1]
 
     # discretize output as categorical feature
+    # TODO: make labels consistent, not rely on testing data distribution
     data['xgb_probs'] = pd.cut(xgb_pred,bins=5,labels=['A','B','C','D','E'])
 
     # catboost
-    cat_feats_with_xgb = cat_feats+['xgb_probs']
     cat_preds = cat_model.predict(data[cat_feats_with_xgb])
     cat_probs = np.max(cat_model.predict_proba(data[cat_feats_with_xgb]),axis=1)
 
