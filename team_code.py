@@ -192,7 +192,7 @@ def train_challenge_model(data_folder, model_folder, verbose):
     # catboost
     cat_feats_with_xgb = cat_feats+['xgb_probs']
     cat_train = Pool(X_train[cat_feats_with_xgb],y_train,cat_features=cat_feats_with_xgb)
-    cat_model = CatBoostClassifier(iterations=500,depth=10,learning_rate=0.1)
+    cat_model = CatBoostClassifier(iterations=200,depth=10,learning_rate=0.1)
     cat_model.fit(cat_train)
 
     # Save the models.
