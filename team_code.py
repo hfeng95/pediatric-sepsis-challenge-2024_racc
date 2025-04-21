@@ -168,27 +168,28 @@ def train_challenge_model(data_folder, model_folder, verbose):
     X,y = df.drop(target_col,axis=1,inplace=False),df[target_col]
 
     # TODO: use all training data
-    X_train,X_test,y_train,y_test = train_test_split(X,y,test_size=0.2)
+    # X_train,X_test,y_train,y_test = train_test_split(X,y,test_size=0.2)
+    X_train,y_train = X,y
 
     if verbose >= 1:
         print('Training the Challenge models on the Challenge data...')
 
     # xgb on numeric features
-    xgb_model = XGBClassifier(n_estimators=100,max_depth=5,learning_rate=0.1)
+    xgb_model = XGBClassifier(n_estimators=200,max_depth=10,learning_rate=0.1)
     xgb_model.fit(X_train[num_feats],y_train)
 
     # logistic regression
     xgb_train = xgb_model.predict_proba(X_train[num_feats])[:,1]
-    xgb_test = xgb_model.predict_proba(X_test[num_feats])[:,1]
+    # xgb_test = xgb_model.predict_proba(X_test[num_feats])[:,1]
 
     # discretize output as categorical feature
     X_train['xgb_probs'] = pd.cut(xgb_train,bins=5,labels=['A','B','C','D','E'])
-    X_test['xgb_probs'] = pd.cut(xgb_test,bins=5,labels=['A','B','C','D','E'])
+    # X_test['xgb_probs'] = pd.cut(xgb_test,bins=5,labels=['A','B','C','D','E'])
 
     # catboost
     cat_feats_with_xgb = cat_feats+['xgb_probs']
     cat_train = Pool(X_train[cat_feats_with_xgb],y_train,cat_features=cat_feats_with_xgb)
-    cat_model = CatBoostClassifier(iterations=100,depth=5,learning_rate=0.1)
+    cat_model = CatBoostClassifier(iterations=500,depth=10,learning_rate=0.1)
     cat_model.fit(cat_train)
 
     # Save the models.
