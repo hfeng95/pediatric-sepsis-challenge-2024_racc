@@ -156,6 +156,9 @@ def train_challenge_model(data_folder, model_folder, verbose):
     if verbose >= 1:
         print('Extracting features and labels from the Challenge data...')
 
+    # Create a folder for the model if it does not already exist.
+    os.makedirs(model_folder, exist_ok=True)
+
     tent_df = pd.read_csv(data_folder)
 
     preprocess_data(tent_df,target_columns=['momagefirstpreg_adm'])
