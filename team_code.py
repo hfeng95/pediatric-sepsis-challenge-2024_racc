@@ -131,6 +131,15 @@ def deal_with_testing_data(num_feats,cat_feats,df):
     for x in cat_feats:
         df[x] = df[x].fillna(df[x].mode()[0],inplace=False)
 
+def check_class_balance(target_col,df):
+    return df[target_col].value_counts().tolist()
+
+def discretize_probs(probs,num_bins=5,eps=1e-8):
+    min_val,max_val = probs.min(),probs.max()
+    edges = np.linspace(min_val-eps,max_val+eps,num_bins+1)
+    binned = pd.cut(probs,bins=edges,labels=False,include_lowest=True)
+    return binned.astype(np.int64),edges
+
 # Train your model.
 def train_challenge_model(data_folder, model_folder, verbose):
     # Find the Challenge data.
@@ -160,39 +169,51 @@ def train_challenge_model(data_folder, model_folder, verbose):
     os.makedirs(model_folder, exist_ok=True)
 
     tent_df = pd.read_csv(data_folder)
+    class_weights = check_class_balance('inhospital_mortality',tent_df)
 
+    # preprocess
     preprocess_data(tent_df,target_columns=['momagefirstpreg_adm'])
     num_feats,cat_feats,target_col = separate_features(tent_df)
     num_feats,cat_feats = deal_with_remaining_missing_features(num_feats,cat_feats,tent_df)
 
     df = tent_df
 
+    # TODO: remove on deploy
+    df_train,df_test = train_test_split(df,stratify=df[target_col],test_size=0.2)
+    df_train.to_csv('train_out.csv',index=False)
+    df_test.to_csv('test_out.csv',index=False)
+    df = df_train
+
     # split features, class
     X,y = df.drop(target_col,axis=1,inplace=False),df[target_col]
 
-    # TODO: use all training data
-    # X_train,X_test,y_train,y_test = train_test_split(X,y,test_size=0.2)
+    # use all training data
     X_train,y_train = X,y
 
     if verbose >= 1:
         print('Training the Challenge models on the Challenge data...')
 
     # xgb on numeric features
-    xgb_model = XGBClassifier(n_estimators=200,max_depth=10,learning_rate=0.1)
+    xgb_model = XGBClassifier(n_estimators=100,max_depth=3,learning_rate=0.1,scale_pos_weight=3)
     xgb_model.fit(X_train[num_feats],y_train)
 
     # logistic regression
     xgb_train = xgb_model.predict_proba(X_train[num_feats])[:,1]
-    # xgb_test = xgb_model.predict_proba(X_test[num_feats])[:,1]
 
     # discretize output as categorical feature
-    X_train['xgb_probs'] = pd.cut(xgb_train,bins=5,labels=['A','B','C','D','E'])
-    # X_test['xgb_probs'] = pd.cut(xgb_test,bins=5,labels=['A','B','C','D','E'])
+    num_bins = 5
+    train_bins,bin_edges = discretize_probs(xgb_train,num_bins)
+    if verbose >= 1:
+        print('Splitting xgb output into bins: ',bin_edges)
+    X_train['xgb_probs'] = train_bins
+
+    # save bin data
+    np.save('bin_edges.npy',bin_edges)
 
     # catboost
     cat_feats_with_xgb = cat_feats+['xgb_probs']
     cat_train = Pool(X_train[cat_feats_with_xgb],y_train,cat_features=cat_feats_with_xgb)
-    cat_model = CatBoostClassifier(iterations=200,depth=10,learning_rate=0.1)
+    cat_model = CatBoostClassifier(iterations=50,depth=8,learning_rate=0.1,class_weights=class_weights)
     cat_model.fit(cat_train)
 
     # Save the models.
@@ -219,10 +240,6 @@ def run_challenge_model(model, data_folder, verbose):
 
     # Load data.
     patient_ids, data, label, features = load_challenge_data(data_folder)
-    
-    # preprocess_data(data,target_columns=['momagefirstpreg_adm'])
-    # num_feats,cat_feats,target_col = separate_features(data)
-    # num_feats,cat_feats = deal_with_remaining_missing_features(num_feats,cat_feats,data)
 
     xgb_model,cat_model = model
 
@@ -237,12 +254,14 @@ def run_challenge_model(model, data_folder, verbose):
     xgb_pred = xgb_model.predict_proba(data[xgb_feats])[:,1]
 
     # discretize output as categorical feature
-    # TODO: make labels consistent, not rely on testing data distribution
-    data['xgb_probs'] = pd.cut(xgb_pred,bins=5,labels=['A','B','C','D','E'])
+    bin_edges = np.load('bin_edges.npy')
+    if verbose >= 1:
+        print('Using bins: ',bin_edges)
+    data['xgb_probs'] = pd.cut(xgb_pred,bins=bin_edges,labels=False,include_lowest=True).astype(np.int64)
 
     # catboost
     cat_preds = cat_model.predict(data[cat_feats_with_xgb])
-    cat_probs = np.max(cat_model.predict_proba(data[cat_feats_with_xgb]),axis=1)
+    cat_probs = cat_model.predict_proba(data[cat_feats_with_xgb])[:,1]
 
     return patient_ids, cat_preds, cat_probs
 
