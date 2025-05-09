@@ -134,10 +134,9 @@ def deal_with_testing_data(num_feats,cat_feats,df):
 def check_class_balance(target_col,df):
     return df[target_col].value_counts().tolist()
 
-def discretize_probs(probs,num_bins=5,eps=1e-8):
-    min_val,max_val = probs.min(),probs.max()
-    edges = np.linspace(min_val-eps,max_val+eps,num_bins+1)
-    binned = pd.cut(probs,bins=edges,labels=False,include_lowest=True)
+def discretize_probs(probs,num_bins=5):
+    binned,edges = pd.qcut(probs,q=num_bins,retbins=True,labels=False)
+    edges[0],edges[-1] = 0,1
     return binned.astype(np.int64),edges
 
 # Train your model.
@@ -194,7 +193,7 @@ def train_challenge_model(data_folder, model_folder, verbose):
         print('Training the Challenge models on the Challenge data...')
 
     # xgb on numeric features
-    xgb_model = XGBClassifier(n_estimators=100,max_depth=3,learning_rate=0.1,scale_pos_weight=3)
+    xgb_model = XGBClassifier(n_estimators=3600,max_depth=11,learning_rate=0.1,scale_pos_weight=10)
     xgb_model.fit(X_train[num_feats],y_train)
 
     # logistic regression
@@ -213,8 +212,8 @@ def train_challenge_model(data_folder, model_folder, verbose):
     # catboost
     cat_feats_with_xgb = cat_feats+['xgb_probs']
     cat_train = Pool(X_train[cat_feats_with_xgb],y_train,cat_features=cat_feats_with_xgb)
-    cat_model = CatBoostClassifier(iterations=50,depth=8,learning_rate=0.1,class_weights=class_weights)
-    cat_model.fit(cat_train)
+    cat_model = CatBoostClassifier(iterations=5000,depth=12,learning_rate=0.1,class_weights=[1,30])
+    cat_model.fit(cat_train,early_stopping_rounds=10)
 
     # Save the models.
     save_challenge_model(model_folder,(xgb_model,cat_model))

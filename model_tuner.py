@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split,ParameterGrid
-from sklearn.metrics import f1_score,roc_auc_score
+from sklearn.metrics import f1_score,roc_auc_score,average_precision_score,fbeta_score
 from xgboost import XGBClassifier
 from catboost import CatBoostClassifier,Pool
 from team_code import preprocess_data,separate_features,deal_with_remaining_missing_features,check_class_balance,discretize_probs
@@ -23,7 +23,9 @@ def run_experiment(df,target_col,num_feats,cat_feats,xgb_params,cat_params,num_b
 
     # Bin them
     train_bins,bin_edges = discretize_probs(train_probs,num_bins)
+    # print(np.unique(train_bins,return_counts=True)[1])
     val_bins = pd.cut(val_probs,bins=bin_edges,labels=False,include_lowest=True).astype(np.int64)
+    # print(np.unique(val_bins,return_counts=True)[1])
 
     X_train['xgb_probs'] = train_bins
     X_val['xgb_probs'] = val_bins
@@ -32,7 +34,7 @@ def run_experiment(df,target_col,num_feats,cat_feats,xgb_params,cat_params,num_b
     train_pool = Pool(X_train[full_cat_feats],y_train,cat_features=full_cat_feats)
     val_pool = Pool(X_val[full_cat_feats],y_val,cat_features=full_cat_feats)
 
-    cat = CatBoostClassifier(**cat_params,class_weights=class_weights,verbose=0)
+    cat = CatBoostClassifier(**cat_params,verbose=0)
     cat.fit(train_pool)
 
     val_preds = cat.predict(val_pool)
@@ -40,7 +42,9 @@ def run_experiment(df,target_col,num_feats,cat_feats,xgb_params,cat_params,num_b
 
     return {
         'f1': f1_score(y_val,val_preds),
+        'fb': fbeta_score(y_val,val_preds,beta=4),
         'auc': roc_auc_score(y_val,val_proba),
+        'auprc': average_precision_score(y_val,val_proba),
         'xgb_params': xgb_params,
         'cat_params': cat_params
     }
@@ -50,12 +54,14 @@ def hyperparam_search(df,target_col,num_feats,cat_feats,xgb_grid,cat_grid,num_ru
     for xgb_params in ParameterGrid(xgb_grid):
         for cat_params in ParameterGrid(cat_grid):
             print(f"Testing XGB {xgb_params} + CAT {cat_params} over {num_runs} runs...")
-            aucs, f1s = [],[]
+            aucs,f1s,auprcs,fbs = [],[],[],[]
             for run in range(num_runs):
                 try:
                     result = run_experiment(df.copy(),target_col,num_feats,cat_feats,xgb_params,cat_params)
                     aucs.append(result['auc'])
                     f1s.append(result['f1'])
+                    auprcs.append(result['auprc'])
+                    fbs.append(result['fb'])
                 except Exception as e:
                     print("Error during experiment:",e)
 
@@ -64,8 +70,12 @@ def hyperparam_search(df,target_col,num_feats,cat_feats,xgb_grid,cat_grid,num_ru
                 std_auc = np.std(aucs)
                 mean_f1 = np.mean(f1s)
                 std_f1 = np.std(f1s)
+                mean_auprc = np.mean(auprcs)
+                std_auprc = np.std(auprcs)
+                mean_fb = np.mean(fbs)
+                std_fb = np.std(fbs)
 
-                print(f"Avg AUC: {mean_auc:.4f} ± {std_auc:.4f}, Avg F1: {mean_f1:.4f} ± {std_f1:.4f}")
+                print(f"Avg AUC: {mean_auc:.4f} ± {std_auc:.4f}, Avg F1: {mean_f1:.4f} ± {std_f1:.4f}, Avg AUPRC: {mean_auprc:.4f} ± {std_auprc:.4f}, Avg Fβ: {mean_fb:.4f} ± {std_fb:.4f}")
 
                 results.append({
                     'xgb_params': xgb_params,
@@ -73,7 +83,11 @@ def hyperparam_search(df,target_col,num_feats,cat_feats,xgb_grid,cat_grid,num_ru
                     'mean_auc': mean_auc,
                     'std_auc': std_auc,
                     'mean_f1': mean_f1,
-                    'std_f1': std_f1
+                    'std_f1': std_f1,
+                    'mean_auprc': mean_auprc,
+                    'std_auprc': std_auprc,
+                    'mean_fb': mean_fb,
+                    'std_fb': std_fb
                 })
 
     return pd.DataFrame(results)
@@ -82,20 +96,22 @@ if __name__ == '__main__':
     df = pd.read_csv('SyntheticData_Training.csv')
     target_col = 'inhospital_mortality'
     xgb_grid = {
-        'n_estimators': [50,100,200,300],
-        'max_depth': [3,7],
+        'n_estimators': [3600],
+        'max_depth': [11],
         'learning_rate': [0.1],
-        'scale_pos_weight': [1,3,10]
+        'scale_pos_weight': [10]
     }
 
     cat_grid = {
-        'iterations': [10,50],
-        'depth': [4,8],
-        'learning_rate': [0.1]
+        'iterations': [5000],
+        'depth': [12,14],
+        'learning_rate': [0.1],
+        'class_weights': [[1,20],[1,30]],
+        'early_stopping_rounds': [10]
     }
 
     preprocess_data(df,target_columns=['momagefirstpreg_adm'])
     num_feats,cat_feats,target_col = separate_features(df)
     num_feats,cat_feats = deal_with_remaining_missing_features(num_feats,cat_feats,df)
-    results = hyperparam_search(df,target_col,num_feats,cat_feats,xgb_grid,cat_grid)
-    results.sort_values(by='mean_auc',ascending=False).to_csv('model_results.csv',index=False)
+    results = hyperparam_search(df,target_col,num_feats,cat_feats,xgb_grid,cat_grid,num_runs=4)
+    results.sort_values(by='mean_fb',ascending=False).to_csv('model_results.csv',index=False)
