@@ -263,6 +263,7 @@ def run_challenge_model(model, data_folder, verbose):
     cat_preds = cat_model.predict(data[cat_feats_with_xgb])
     cat_probs = cat_model.predict_proba(data[cat_feats_with_xgb])[:,1]
 
+    '''
     if verbose:
         # Identify FP and TP
         y_pred = (cat_probs >= 0.5).astype(int)
@@ -272,6 +273,7 @@ def run_challenge_model(model, data_folder, verbose):
 
         fp_cases = X[fp_mask]
         tp_cases = X[tp_mask]
+    '''
 
 
     return patient_ids, cat_preds, cat_probs
