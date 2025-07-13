@@ -42,14 +42,14 @@ def run_experiment(df,target_col,num_feats,cat_feats,xgb_params,cat_params,num_b
 
     return {
         'f1': f1_score(y_val,val_preds),
-        'fb': fbeta_score(y_val,val_preds,beta=4),
+        'fb': fbeta_score(y_val,val_preds,beta=2),
         'auc': roc_auc_score(y_val,val_proba),
         'auprc': average_precision_score(y_val,val_proba),
         'xgb_params': xgb_params,
         'cat_params': cat_params
     }
 
-def hyperparam_search(df,target_col,num_feats,cat_feats,xgb_grid,cat_grid,num_runs=10):
+def hyperparam_search(df,target_col,num_feats,cat_feats,xgb_grid,cat_grid,num_bins=5,num_runs=10):
     results = []
     for xgb_params in ParameterGrid(xgb_grid):
         for cat_params in ParameterGrid(cat_grid):
@@ -57,7 +57,7 @@ def hyperparam_search(df,target_col,num_feats,cat_feats,xgb_grid,cat_grid,num_ru
             aucs,f1s,auprcs,fbs = [],[],[],[]
             for run in range(num_runs):
                 try:
-                    result = run_experiment(df.copy(),target_col,num_feats,cat_feats,xgb_params,cat_params)
+                    result = run_experiment(df.copy(),target_col,num_feats,cat_feats,xgb_params,cat_params,num_bins=num_bins)
                     aucs.append(result['auc'])
                     f1s.append(result['f1'])
                     auprcs.append(result['auprc'])
@@ -96,22 +96,22 @@ if __name__ == '__main__':
     df = pd.read_csv('SyntheticData_Training.csv')
     target_col = 'inhospital_mortality'
     xgb_grid = {
-        'n_estimators': [3600],
+        'n_estimators': [600],
         'max_depth': [11],
         'learning_rate': [0.1],
         'scale_pos_weight': [10]
     }
 
     cat_grid = {
-        'iterations': [5000],
-        'depth': [12,14],
+        'iterations': [180],
+        'depth': [7,8,9,10,11,12,13,14,15],
         'learning_rate': [0.1],
-        'class_weights': [[1,20],[1,30]],
+        'class_weights': [[1,20]],
         'early_stopping_rounds': [10]
     }
 
     preprocess_data(df,target_columns=['momagefirstpreg_adm'])
     num_feats,cat_feats,target_col = separate_features(df)
     num_feats,cat_feats = deal_with_remaining_missing_features(num_feats,cat_feats,df)
-    results = hyperparam_search(df,target_col,num_feats,cat_feats,xgb_grid,cat_grid,num_runs=4)
+    results = hyperparam_search(df,target_col,num_feats,cat_feats,xgb_grid,cat_grid,num_bins=3,num_runs=10)
     results.sort_values(by='mean_fb',ascending=False).to_csv('model_results.csv',index=False)

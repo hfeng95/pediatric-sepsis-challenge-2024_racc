@@ -193,14 +193,14 @@ def train_challenge_model(data_folder, model_folder, verbose):
         print('Training the Challenge models on the Challenge data...')
 
     # xgb on numeric features
-    xgb_model = XGBClassifier(n_estimators=3600,max_depth=11,learning_rate=0.1,scale_pos_weight=10)
+    xgb_model = XGBClassifier(n_estimators=600,max_depth=11,learning_rate=0.1,scale_pos_weight=10)
     xgb_model.fit(X_train[num_feats],y_train)
 
     # logistic regression
     xgb_train = xgb_model.predict_proba(X_train[num_feats])[:,1]
 
     # discretize output as categorical feature
-    num_bins = 5
+    num_bins = 3
     train_bins,bin_edges = discretize_probs(xgb_train,num_bins)
     if verbose >= 1:
         print('Splitting xgb output into bins: ',bin_edges)
@@ -212,7 +212,7 @@ def train_challenge_model(data_folder, model_folder, verbose):
     # catboost
     cat_feats_with_xgb = cat_feats+['xgb_probs']
     cat_train = Pool(X_train[cat_feats_with_xgb],y_train,cat_features=cat_feats_with_xgb)
-    cat_model = CatBoostClassifier(iterations=5000,depth=12,learning_rate=0.1,class_weights=[1,30])
+    cat_model = CatBoostClassifier(iterations=180,depth=14,learning_rate=0.1,class_weights=[1,20])
     cat_model.fit(cat_train,early_stopping_rounds=10)
 
     # Save the models.
@@ -259,8 +259,20 @@ def run_challenge_model(model, data_folder, verbose):
     data['xgb_probs'] = pd.cut(xgb_pred,bins=bin_edges,labels=False,include_lowest=True).astype(np.int64)
 
     # catboost
+    # cat_model.set_probability_threshold(0.1)
     cat_preds = cat_model.predict(data[cat_feats_with_xgb])
     cat_probs = cat_model.predict_proba(data[cat_feats_with_xgb])[:,1]
+
+    if verbose:
+        # Identify FP and TP
+        y_pred = (cat_probs >= 0.5).astype(int)
+
+        fp_mask = (y_pred == 1) & (y_true == 0)
+        tp_mask = (y_pred == 1) & (y_true == 1)
+
+        fp_cases = X[fp_mask]
+        tp_cases = X[tp_mask]
+
 
     return patient_ids, cat_preds, cat_probs
 

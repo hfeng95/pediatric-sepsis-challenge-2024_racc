@@ -33,5 +33,5 @@ def plot_auprc(results_df, param_key='xgb_params', param_name='learning_rate', m
 
 if __name__ == '__main__':
     results_df = pd.read_csv('model_results.csv')
-    plot_auprc(results_df, param_key='cat_params', param_name='iterations',metric='mean_fb')
+    plot_auprc(results_df, param_key='cat_params', param_name='depth',metric='mean_fb')
 
