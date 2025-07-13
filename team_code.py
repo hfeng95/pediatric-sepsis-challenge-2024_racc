@@ -21,6 +21,8 @@ from catboost import CatBoostRegressor,CatBoostClassifier,Pool
 from xgboost import XGBRegressor,XGBClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
+from sklearn.metrics import  roc_curve
+from sklearn.model_selection import train_test_split
 import pandas as pd
 import numpy as np
 
@@ -234,6 +236,13 @@ def load_challenge_model(model_folder, verbose):
     cat_model.load_model(os.path.join(model_folder,'cat_model'))
 
     return xgb_model,cat_model
+
+def find_threshold_for_sensitivity(y, p, thr=None, min_sens=0.8):
+    if thr is not None:
+        return thr
+    fpr,tpr,ths=roc_curve(y,p)
+    valid=ths[tpr>=min_sens]
+    return float(valid.max()) if len(valid)>0 else 0.5
 
 def run_challenge_model(model, data_folder, verbose):
 
