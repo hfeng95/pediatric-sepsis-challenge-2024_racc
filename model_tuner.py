@@ -96,15 +96,15 @@ if __name__ == '__main__':
     df = pd.read_csv('SyntheticData_Training.csv')
     target_col = 'inhospital_mortality'
     xgb_grid = {
-        'n_estimators': [600],
-        'max_depth': [11],
+        'n_estimators': [200,500,900],
+        'max_depth': [5,9,13],
         'learning_rate': [0.1],
         'scale_pos_weight': [10]
     }
 
     cat_grid = {
-        'iterations': [180],
-        'depth': [7,8,9,10,11,12,13,14,15],
+        'iterations': [150,300,450,900],
+        'depth': [5,7,9],
         'learning_rate': [0.1],
         'class_weights': [[1,20]],
         'early_stopping_rounds': [10]
@@ -113,5 +113,5 @@ if __name__ == '__main__':
     preprocess_data(df,target_columns=['momagefirstpreg_adm'])
     num_feats,cat_feats,target_col = separate_features(df)
     num_feats,cat_feats = deal_with_remaining_missing_features(num_feats,cat_feats,df)
-    results = hyperparam_search(df,target_col,num_feats,cat_feats,xgb_grid,cat_grid,num_bins=3,num_runs=10)
+    results = hyperparam_search(df,target_col,num_feats,cat_feats,xgb_grid,cat_grid,num_bins=2,num_runs=10)
     results.sort_values(by='mean_fb',ascending=False).to_csv('model_results.csv',index=False)

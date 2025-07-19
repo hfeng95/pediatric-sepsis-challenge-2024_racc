@@ -20,11 +20,13 @@ import joblib
 from catboost import CatBoostRegressor,CatBoostClassifier,Pool
 from xgboost import XGBRegressor,XGBClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score,recall_score
 from sklearn.metrics import  roc_curve
 from sklearn.model_selection import train_test_split
 import pandas as pd
 import numpy as np
+
+val_status = False
 
 ################################################################################
 #
@@ -141,6 +143,13 @@ def discretize_probs(probs,num_bins=5):
     edges[0],edges[-1] = 0,1
     return binned.astype(np.int64),edges
 
+def sensitivity_metric(y_pred,dtrain):
+    y_true = dtrain.get_label()
+    # Convert predicted probabilities to binary class using threshold
+    y_pred_labels = (y_pred>=0.5).astype(int)
+    sensitivity = recall_score(y_true,y_pred_labels)
+    return 'sensitivity',sensitivity
+
 # Train your model.
 def train_challenge_model(data_folder, model_folder, verbose):
     # Find the Challenge data.
@@ -179,11 +188,12 @@ def train_challenge_model(data_folder, model_folder, verbose):
 
     df = tent_df
 
-    # TODO: remove on deploy
-    df_train,df_test = train_test_split(df,stratify=df[target_col],test_size=0.2)
-    df_train.to_csv('train_out.csv',index=False)
-    df_test.to_csv('test_out.csv',index=False)
-    df = df_train
+    # for validation only
+    if val_status == True:
+        df_train,df_test = train_test_split(df,stratify=df[target_col],test_size=0.2)
+        df_train.to_csv('train_out.csv',index=False)
+        df_test.to_csv('test_out.csv',index=False)
+        df = df_train
 
     # split features, class
     X,y = df.drop(target_col,axis=1,inplace=False),df[target_col]
@@ -195,30 +205,30 @@ def train_challenge_model(data_folder, model_folder, verbose):
         print('Training the Challenge models on the Challenge data...')
 
     # xgb on numeric features
-    xgb_model = XGBClassifier(n_estimators=600,max_depth=11,learning_rate=0.1,scale_pos_weight=10)
+    xgb_model = XGBClassifier(n_estimators=900,max_depth=13,learning_rate=0.1,scale_pos_weight=10)
     xgb_model.fit(X_train[num_feats],y_train)
 
     # logistic regression
     xgb_train = xgb_model.predict_proba(X_train[num_feats])[:,1]
 
     # discretize output as categorical feature
-    num_bins = 3
+    num_bins = 2
     train_bins,bin_edges = discretize_probs(xgb_train,num_bins)
     if verbose >= 1:
         print('Splitting xgb output into bins: ',bin_edges)
     X_train['xgb_probs'] = train_bins
 
-    # save bin data
-    np.save('bin_edges.npy',bin_edges)
-
     # catboost
     cat_feats_with_xgb = cat_feats+['xgb_probs']
     cat_train = Pool(X_train[cat_feats_with_xgb],y_train,cat_features=cat_feats_with_xgb)
-    cat_model = CatBoostClassifier(iterations=180,depth=14,learning_rate=0.1,class_weights=[1,20])
+    cat_model = CatBoostClassifier(iterations=15000,depth=9,learning_rate=0.1,class_weights=[1,20])
     cat_model.fit(cat_train,early_stopping_rounds=10)
 
+    # prob threshold for catboost
+    threshold = 0.00036356319660763633
+
     # Save the models.
-    save_challenge_model(model_folder,(xgb_model,cat_model))
+    save_challenge_model(model_folder,(xgb_model,cat_model,bin_edges,threshold))
 
     if verbose >= 1:
         print('Done!')
@@ -235,7 +245,11 @@ def load_challenge_model(model_folder, verbose):
     cat_model = CatBoostClassifier()
     cat_model.load_model(os.path.join(model_folder,'cat_model'))
 
-    return xgb_model,cat_model
+    bin_edges = np.load(os.path.join(model_folder,'bin_edges.npy'))
+
+    threshold = np.load(os.path.join(model_folder,'cat_threshold.npy'))
+
+    return xgb_model,cat_model,bin_edges,threshold
 
 def find_threshold_for_sensitivity(y, p, thr=None, min_sens=0.8):
     if thr is not None:
@@ -249,7 +263,7 @@ def run_challenge_model(model, data_folder, verbose):
     # Load data.
     patient_ids, data, label, features = load_challenge_data(data_folder)
 
-    xgb_model,cat_model = model
+    xgb_model,cat_model,bin_edges,threshold = model
 
     # get features in order
     xgb_feats = xgb_model.get_booster().feature_names
@@ -262,28 +276,23 @@ def run_challenge_model(model, data_folder, verbose):
     xgb_pred = xgb_model.predict_proba(data[xgb_feats])[:,1]
 
     # discretize output as categorical feature
-    bin_edges = np.load('bin_edges.npy')
     if verbose >= 1:
         print('Using bins: ',bin_edges)
     data['xgb_probs'] = pd.cut(xgb_pred,bins=bin_edges,labels=False,include_lowest=True).astype(np.int64)
 
     # catboost
-    # cat_model.set_probability_threshold(0.1)
+    if verbose:
+        print('Loaded threshold:',threshold)
+    cat_model.set_probability_threshold(threshold.tolist())
     cat_preds = cat_model.predict(data[cat_feats_with_xgb])
     cat_probs = cat_model.predict_proba(data[cat_feats_with_xgb])[:,1]
 
-    '''
-    if verbose:
-        # Identify FP and TP
-        y_pred = (cat_probs >= 0.5).astype(int)
-
-        fp_mask = (y_pred == 1) & (y_true == 0)
-        tp_mask = (y_pred == 1) & (y_true == 1)
-
-        fp_cases = X[fp_mask]
-        tp_cases = X[tp_mask]
-    '''
-
+    # custom threshold for min sensitivity, used in validation only
+    if val_status == True:
+        threshold = find_threshold_for_sensitivity(label, cat_probs, min_sens=0.8)
+        if verbose:
+            print('Using threshold:',threshold)
+        cat_preds = (cat_probs >= threshold).astype(int)
 
     return patient_ids, cat_preds, cat_probs
 
@@ -295,6 +304,12 @@ def run_challenge_model(model, data_folder, verbose):
 
 # Save your trained model.
 def save_challenge_model(model_folder,model):
-    xgb_model,cat_model = model
+    xgb_model,cat_model,bin_edges,threshold = model
     xgb_model.save_model(os.path.join(model_folder,'xgb_model'))
     cat_model.save_model(os.path.join(model_folder,'cat_model'))
+
+    # save bin data
+    np.save(os.path.join(model_folder,'bin_edges.npy'),bin_edges)
+
+    # save prob threshold
+    np.save(os.path.join(model_folder,'cat_threshold.npy'),threshold)
