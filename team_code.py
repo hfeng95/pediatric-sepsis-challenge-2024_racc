@@ -39,28 +39,40 @@ def preprocess_data(df,target_columns):
     data_binned = df.copy()
 
     data_binned['agecalc_adm'] = data_binned['agecalc_adm'].round()
+    
     mean_weights = data_binned.groupby('agecalc_adm')['weight_kg_adm'].transform('mean')
     std_weights = data_binned.groupby('agecalc_adm')['weight_kg_adm'].transform('std')
-
+    mean_heights = data_binned.groupby('agecalc_adm')['height_cm_adm'].transform('mean')
+    std_heights = data_binned.groupby('agecalc_adm')['height_cm_adm'].transform('std')
+    
     data_binned['weight_kg_adm'] = data_binned['weight_kg_adm'].fillna(mean_weights)
     df['weight_kg_adm'] = df['weight_kg_adm'].fillna(mean_weights)
+    data_binned['height_cm_adm'] = data_binned['height_cm_adm'].fillna(mean_heights)
+    df['height_cm_adm'] = df['height_cm_adm'].fillna(mean_heights)
 
     for idx, row in data_binned.iterrows():
         age = row['agecalc_adm']
         weight = row['weight_kg_adm']
-        age_mean = mean_weights.loc[idx]
-        age_std = std_weights.loc[idx]
+        weight_mean = mean_weights.loc[idx]
+        weight_std = std_weights.loc[idx]
+        height = row['height_cm_adm']
+        height_mean = mean_heights.loc[idx]
+        height_std = std_heights.loc[idx]
         
-        if weight > age_mean + 2.5 * age_std:
+        if weight > weight_mean + 2.5 * weight_std:
             weight_in_kg = weight * 0.453592  # Convert pounds to kg
             data_binned.loc[idx, 'weight_kg_adm'] = weight_in_kg
             df.loc[idx, 'weight_kg_adm'] = weight_in_kg
-
+            
+        if abs(height - height_mean) > 3 * height_std:
+            data_binned.loc[idx, 'height_cm_adm'] = height_mean
+            df.loc[idx, 'height_cm_adm'] = height_mean 
     # ==============
     
-    # Add binned age and weight columns
+    # Add binned age and weight/height columns
     df['age_bin'] = df['agecalc_adm'].round()
     df['weight_bin'] = df['weight_kg_adm'].round()
+    df['height_bin'] = df['height_cm_adm'].round()
 
     # fill missing values based on means of given group columns
     def fill_missing_with_group_mean(df, group_cols, target_cols):
@@ -70,23 +82,22 @@ def preprocess_data(df,target_columns):
             )
 
     # Fill missing values for features
-    group_columns = ['age_bin', 'weight_bin']
+    group_columns = ['age_bin', 'weight_bin', 'height_bin']
     fill_missing_with_group_mean(df, group_columns, target_columns)
 
     # drop binned columns
-    df.drop(columns=['age_bin', 'weight_bin'], inplace=True)
+    df.drop(columns=['age_bin', 'weight_bin', 'height_bin'], inplace=True)
 
 def separate_features(df):
     feats = df.columns
     num_feats = ['agecalc_adm', 'height_cm_adm', 'weight_kg_adm', 'muac_mm_adm',
-        'hr_bpm_adm', 'rr_brpm_app_adm', 'sysbp_mmhg_adm',
-        'diasbp_mmhg_adm', 'temp_c_adm', 'spo2site1_pc_oxi_adm',
-        'spo2site2_pc_oxi_adm', 'spo2other_adm', 'hematocrit_gpdl_adm',
+        'hr_bpm_adm', 'rr_brpm_app_adm', 'sysbp_mmhg_adm', 'blantyre_score',
+        'diasbp_mmhg_adm', 'temp_c_adm', 'overall_spo2_mean', 'hematocrit_gpdl_adm',
         'lactate_mmolpl_adm', 'lactate2_mmolpl_adm', 'glucose_mmolpl_adm',
         'sqi1_perc_oxi_adm', 'sqi2_perc_oxi_adm']
 
-    cat_feats = ['sex_adm', 'spo2onoxy_adm', 'oxygenavail_adm', 'respdistress_adm',
-        'caprefill_adm', 'bcseye_adm', 'bcsmotor_adm', 'bcsverbal_adm',
+    cat_feats = ['sex_adm', 'oxygenavail_adm', 'respdistress_adm',
+        'caprefill_adm',
         'bcgscar_adm', 'vaccmeasles_adm', 'vaccpneumoc_adm', 'vaccdpt_adm',
         'priorweekabx_adm', 'priorweekantimal_adm', 'symptoms_adm___1',
         'symptoms_adm___2', 'symptoms_adm___3', 'symptoms_adm___4',
@@ -113,6 +124,85 @@ def separate_features(df):
     target_col = ['inhospital_mortality']
 
     return num_feats,cat_feats,target_col
+
+def merge_oxygen(df):
+    df['spo2_combined_adm'] = df[['spo2site1_pc_oxi_adm', 'spo2site2_pc_oxi_adm', 'spo2other_adm']].mean(axis=1, skipna=True)
+    overall_spo2_mean = df['spo2_combined_adm'].mean()
+    df['spo2_combined_adm'] = df['spo2_combined_adm'].fillna(overall_spo2_mean)
+
+    df.drop(columns=['spo2site1_pc_oxi_adm', 'spo2site2_pc_oxi_adm', 'spo2other_adm'], inplace=True)
+
+def bcs_score(df):
+    # Define the mappings
+    eye_map = {
+        'Watches or follows': 1,
+        'Fails to watch or follow': 0
+    }
+
+    motor_map = {
+        'Localizes painful stimulus': 2,
+        'Withdraws limb from painful stimulus': 1,
+        'No response or inappropriate response': 0
+    }
+
+    verbal_map = {
+        'Cries appropriately with pain, or, if verbal, speaks': 2,
+        'Moan or abnormal cry with pain': 1,
+        'No vocal response to pain': 0
+    }
+
+    # Map textual values to scores
+    df['eye_score'] = df['bcseye_adm'].map(eye_map)
+    df['motor_score'] = df['bcsmotor_adm'].map(motor_map)
+    df['verbal_score'] = df['bcsverbal_adm'].map(verbal_map)
+
+    # Define function to calculate the BCS per row
+    def calc_bcs(row):
+        eye = row['eye_score']
+        motor = row['motor_score']
+        verbal = row['verbal_score']
+
+        components = [eye, motor, verbal]
+        present = [x for x in components if not np.isnan(x)]
+
+        if len(present) == 0:
+            return 5
+        if len(present) == 1:
+            return present[0] * 3
+        if len(present) == 2:
+            avg = sum(present) / 2
+            total = sum(present) + avg
+            return round(total)
+        return eye + motor + verbal
+
+    df['blantyre_score'] = df.apply(calc_bcs, axis=1)
+    df['blantyre_score'] = df['blantyre_score'].clip(0, 5).astype('Int64')
+
+    df.drop(columns=['eye_score', 'motor_score', 'verbal_score', 'bcseye_adm', 'motor_score', 'verbal_score'], inplace=True)
+
+    return df
+
+def combine_lactate(df):
+    overall_mean = pd.concat([df['lactate_mmolpl_adm'], df['lactate2_mmolpl_adm']]).mean()
+
+    def combine_row(row):
+        a = row['lactate_mmolpl_adm']
+        b = row['lactate2_mmolpl_adm']
+
+        if pd.notna(a) and pd.notna(b):
+            return (a + b) / 2
+        elif pd.notna(a):
+            return a
+        elif pd.notna(b):
+            return b
+        else:
+            return overall_mean
+
+    df['lactate_combined'] = df.apply(combine_row, axis=1)
+
+    df.drop(columns=['lactate_mmolpl_adm', 'lactate2_mmolpl_adm'],inplace=True)
+
+    return df
 
 def deal_with_remaining_missing_features(num_feats,cat_feats,df):
     # fill numeric na with mean of column if less than half na else drop, and drop categoric na
@@ -182,24 +272,31 @@ def train_challenge_model(data_folder, model_folder, verbose):
     class_weights = check_class_balance('inhospital_mortality',tent_df)
 
     # preprocess
+    unwanted_features = ['symptoms_adm___18','symptoms_adm___17','comorbidity_adm___4','comorbidity_adm___3',
+                         'comorbidity_adm___9','comorbidity_adm___8','comorbidity_adm___4','symptoms_adm___16',
+                         'birthdetail_adm___4','birthdetail_adm___2','height_cm_adm','hematocrit_gpdl_adm',
+                         'symptoms_adm___15','birthdetail_adm___6','comorbidity_adm___2','comorbidity_adm___10',
+                         'comorbidity_adm___6']
     preprocess_data(tent_df,target_columns=['momagefirstpreg_adm'])
+    merge_oxygen(tent_df)
+    bcs_score(tent_df)
+    combine_lactate(tent_df)
     num_feats,cat_feats,target_col = separate_features(tent_df)
     num_feats,cat_feats = deal_with_remaining_missing_features(num_feats,cat_feats,tent_df)
-
-    df = tent_df
+    selected_features = [col for col in tent_df.columns if col not in unwanted_features]
+    num_feats = [col for col in num_feats if col not in unwanted_features]
+    cat_feats = [col for col in cat_feats if col not in unwanted_features]
+    df = tent_df[selected_features]
 
     # for validation only
-    if val_status == True:
+    if val_status:
         df_train,df_test = train_test_split(df,stratify=df[target_col],test_size=0.2)
         df_train.to_csv('train_out.csv',index=False)
         df_test.to_csv('test_out.csv',index=False)
         df = df_train
 
     # split features, class
-    X,y = df.drop(target_col,axis=1,inplace=False),df[target_col]
-
-    # use all training data
-    X_train,y_train = X,y
+    X_train,y_train = df.drop(target_col,axis=1,inplace=False),df[target_col]
 
     if verbose >= 1:
         print('Training the Challenge models on the Challenge data...')
@@ -221,14 +318,14 @@ def train_challenge_model(data_folder, model_folder, verbose):
     # catboost
     cat_feats_with_xgb = cat_feats+['xgb_probs']
     cat_train = Pool(X_train[cat_feats_with_xgb],y_train,cat_features=cat_feats_with_xgb)
-    cat_model = CatBoostClassifier(iterations=15000,depth=9,learning_rate=0.1,class_weights=[1,20])
+    cat_model = CatBoostClassifier(iterations=1500,depth=9,learning_rate=0.1,class_weights=[1,20])
     cat_model.fit(cat_train,early_stopping_rounds=10)
 
     # prob threshold for catboost
-    threshold = 0.00036356319660763633
+    threshold = 0.0001149958417560544
 
     # Save the models.
-    save_challenge_model(model_folder,(xgb_model,cat_model,bin_edges,threshold))
+    save_challenge_model(model_folder,(xgb_model,cat_model,bin_edges,threshold,selected_features))
 
     if verbose >= 1:
         print('Done!')
@@ -249,7 +346,9 @@ def load_challenge_model(model_folder, verbose):
 
     threshold = np.load(os.path.join(model_folder,'cat_threshold.npy'))
 
-    return xgb_model,cat_model,bin_edges,threshold
+    selected_features = np.load(os.path.join(model_folder,'selected_features.npy')).tolist()
+
+    return xgb_model,cat_model,bin_edges,threshold,selected_features
 
 def find_threshold_for_sensitivity(y, p, thr=None, min_sens=0.8):
     if thr is not None:
@@ -260,10 +359,14 @@ def find_threshold_for_sensitivity(y, p, thr=None, min_sens=0.8):
 
 def run_challenge_model(model, data_folder, verbose):
 
-    # Load data.
-    patient_ids, data, label, features = load_challenge_data(data_folder)
+    xgb_model,cat_model,bin_edges,threshold,selected_features = model
 
-    xgb_model,cat_model,bin_edges,threshold = model
+    # Load data.
+    if val_status:
+        patient_ids, data, label, features = load_challenge_data(data_folder)
+    else:
+        patient_ids, data, features = load_challenge_testdata(data_folder,selected_columns=selected_features)
+        label = None
 
     # get features in order
     xgb_feats = xgb_model.get_booster().feature_names
@@ -288,8 +391,8 @@ def run_challenge_model(model, data_folder, verbose):
     cat_probs = cat_model.predict_proba(data[cat_feats_with_xgb])[:,1]
 
     # custom threshold for min sensitivity, used in validation only
-    if val_status == True:
-        threshold = find_threshold_for_sensitivity(label, cat_probs, min_sens=0.8)
+    if val_status:
+        threshold = find_threshold_for_sensitivity(label, cat_probs, min_sens=0.85)
         if verbose:
             print('Using threshold:',threshold)
         cat_preds = (cat_probs >= threshold).astype(int)
@@ -304,7 +407,7 @@ def run_challenge_model(model, data_folder, verbose):
 
 # Save your trained model.
 def save_challenge_model(model_folder,model):
-    xgb_model,cat_model,bin_edges,threshold = model
+    xgb_model,cat_model,bin_edges,threshold,selected_features = model
     xgb_model.save_model(os.path.join(model_folder,'xgb_model'))
     cat_model.save_model(os.path.join(model_folder,'cat_model'))
 
@@ -313,3 +416,6 @@ def save_challenge_model(model_folder,model):
 
     # save prob threshold
     np.save(os.path.join(model_folder,'cat_threshold.npy'),threshold)
+
+    # save features selection
+    np.save(os.path.join(model_folder,'selected_features.npy'),np.array(selected_features))
