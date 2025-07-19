@@ -318,11 +318,11 @@ def train_challenge_model(data_folder, model_folder, verbose):
     # catboost
     cat_feats_with_xgb = cat_feats+['xgb_probs']
     cat_train = Pool(X_train[cat_feats_with_xgb],y_train,cat_features=cat_feats_with_xgb)
-    cat_model = CatBoostClassifier(iterations=1500,depth=9,learning_rate=0.1,class_weights=[1,20])
+    cat_model = CatBoostClassifier(iterations=900,depth=9,learning_rate=0.1,class_weights=[1,20])
     cat_model.fit(cat_train,early_stopping_rounds=10)
 
     # prob threshold for catboost
-    threshold = 0.0001149958417560544
+    threshold = 3.0000333429776503e-05
 
     # Save the models.
     save_challenge_model(model_folder,(xgb_model,cat_model,bin_edges,threshold,selected_features))
